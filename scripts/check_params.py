@@ -2,9 +2,9 @@
 """公文/党建 参数自检器
 
 设计原则：只判"硬冲突"（文种识别错误），其余仅作对照提示。
-理由：真实获奖作品个体差异极大（如调研报告"一是二是"从 0 到 20 次都有），
-      用均值当合格线会把好作品判成不合格。均值可用于生成时对标，
-      不可用于个体验收。
+理由：真实公文的个体差异极大（如调研报告"一是二是"从 0 到 20 次都有），
+      用均值当合格线会把好作品判成不合格。本脚本的参考值统一为
+      中位数 + 四分位（p25-p75），与 参数卡.md 完全一致。
 
 用法:
   python3 check_params.py draft.md --genre 调研报告
@@ -89,7 +89,7 @@ SOFT = {
 # ⚠ 不要用 `文章结构模板.md` 里的区间做验收。那份数据来自每文种 3 篇精读
 # 抽样，与全量差异很大：经验材料抽样得 47-59%，全量实为 27-56%（中位 33）；
 # 工作意见抽样得 44-53%，全量实为 24-50%（中位 42）。用抽样值当合格线，
-# 真实获奖作品的命中率只有 8%-16%。
+# 真实公文的命中率只有 8%-16%。
 #
 # 因此本项**只作对照提示，不参与硬冲突判定**。个体离散度极大
 # （调研报告最重一段从 17% 到 72% 都有），区间外不等于写错。
@@ -114,9 +114,13 @@ ID_PARAM = {
     '短经验材料': '零一级标题 + 长引号引语多（引群众原话）',
 }
 
+# 法定公文：结构由制度锁定，是固定填空而非写作技法，故不设参数行。
+# 用 --genre 指定这些文种时给出解释，而不是只报"未知文体"。
+NO_PARAM = ('报告', '通知', '请示', '批复', '函', '决定', '条例', '意见', '通报', '纪要')
+
 BAD_WORDS = {
     '我觉得': '公文不用第一人称主观判断 → 研究认为/实践表明',
-    '我认为': '同上',
+    '我认为': '公文不用第一人称主观判断 → 研究认为/实践表明',
     '非常': '空洞程度副词 → 用数据或事实替代',
     '取得了显著成效': '万能废话 → 说清具体成效',
     '希望领导重视': '太直白 → 用论证逻辑自然导向结论',
@@ -405,7 +409,18 @@ def main():
             print(f'  {k:<10} n={REF[k]["n"]:<4} {v}')
         sys.exit(0)
 
-    a = analyze(Path(args.file).read_text(encoding='utf-8'))
+    try:
+        raw = Path(args.file).read_text(encoding='utf-8')
+    except FileNotFoundError:
+        print(f'找不到文件：{args.file}', file=sys.stderr); sys.exit(2)
+    except IsADirectoryError:
+        print(f'这是一个目录，不是文件：{args.file}', file=sys.stderr); sys.exit(2)
+    except UnicodeDecodeError:
+        print(f'无法按 UTF-8 读取（请确认是文本文件）：{args.file}', file=sys.stderr); sys.exit(2)
+    except OSError as e:
+        print(f'读取失败：{args.file}（{e.strerror}）', file=sys.stderr); sys.exit(2)
+
+    a = analyze(raw)
     if not a:
         print('文件为空或无法解析', file=sys.stderr); sys.exit(2)
 
@@ -426,7 +441,17 @@ def main():
         sys.exit(0)
 
     if args.genre not in REF:
-        print(f'未知文体。可选：{"、".join(REF)}', file=sys.stderr); sys.exit(2)
+        print(f'未知文体：{args.genre}', file=sys.stderr)
+        print(f'可选：{"、".join(REF)}', file=sys.stderr)
+        if args.genre in NO_PARAM:
+            print(f'\n说明：{args.genre}属法定公文，本 skill 不为其设参数行——'
+                  f'其正文结构由制度锁定，是固定填空而非写作技法，统计参数没有意义。',
+                  file=sys.stderr)
+            print(f'`示例/` 里确有 {args.genre} 范文，但它们只做文体族校验与版式核对，不做参数验收。',
+                  file=sys.stderr)
+            print(f'版式要素（发文字号、主送机关、成文日期、公开标识）请对照 '
+                  f'`参考/法定公文样例/` 的真件；用 --match 可查它是否落在公文族内。', file=sys.stderr)
+        sys.exit(2)
 
     fails = report(a, args.genre)
     sys.exit(1 if fails else 0)
